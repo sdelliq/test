@@ -1,0 +1,68 @@
+clean_column_names <- function(names) {
+  # Use a regular expression to find positions between consecutive uppercase and lowercase letters to solve for example BorrowerName
+  pattern <- "(?<=[a-z])(?=[A-Z])"
+  names <- gsub(pattern, ".", names, perl = TRUE)
+  
+  # Make.names handles other invalid characters and ensures uniqueness
+  names <- make.names(names, unique = TRUE)
+  # Use gsub to replace consecutive dots with a single dot and remove trailing dots
+  names <- gsub("\\.{2,}", ".", names)
+  names <- gsub("\\.$", "", names)
+  
+  return(names)
+}
+colnames(df) <- clean_column_names(colnames(df))
+
+
+#Returns the possible primary keys 
+possiblePKs <- function(df){ 
+  # Calculate the ratio of uniqueness as a numeric vector
+  uniqueness_ratios <- apply(df, 2, function(x) {
+    if (any(is.na(x))) {
+      ((length(unique(x)) - sum(is.na(x))) / length(x)) * 100
+    } else {
+      length(unique(x)) / length(x) * 100
+    }
+  })
+  # Combine column names and ratios into a data frame
+  PK <- data.frame(Column = names(uniqueness_ratios), Ratio = sprintf("%.2f%%", uniqueness_ratios))
+  # Add a new column indicating if there are NAs in the corresponding columns
+  PK$Has_NA <- apply(df, 2, function(x) any(is.na(x)))
+  #Only gets ratios over 80
+  PK <- PK %>% filter(as.numeric(gsub("%", "", Ratio))>80)
+  # Get the indices that sort the ratios in descending order
+  sorted_indices <- order(as.numeric(gsub("%", "", PK$Ratio)), decreasing = TRUE)
+  # Reorder PK based on the sorted indices
+  PK <- PK[sorted_indices, ]
+  return(PK)
+}
+possiblePKs(df)
+
+
+
+#Finds the functional dependencies between a column we suspect is a foreign/primary key, and the rest of the columns of the given dataframe (df)
+functionalDependencies <- function(df, susColumn) {
+  dependencies <- data.frame(column = character(), ratio = numeric(), stringsAsFactors = FALSE)
+  for (i in colnames(df)){
+    susColumn <- enquo(susColumn)#This is to work with the parameter properly 
+    #Takes a column and analyses if every group of values is represented by a group of the same amount of values in the determinant column 
+    FunctDep <- df %>% select(!!susColumn, .data[[i]]) %>% group_by(!!susColumn)
+    determinatorQ <- FunctDep %>% distinct(!!susColumn) %>% nrow()
+    n_rows_intersection <- FunctDep %>% distinct(!!susColumn, .data[[i]])%>% nrow()
+    if( n_rows_intersection == determinatorQ){
+      dependencies[nrow(dependencies) + 1,] = c(i,100)
+    }
+    else{
+      ratio <- determinatorQ/n_rows_intersection * 100
+      dependencies[nrow(dependencies) + 1,] = c(i, ratio)
+    }
+  }
+  #Adds the column Has_NA and puts true if in any row there's an NA
+  dependencies$Has_NA <- apply(df, 2, function(x) any(is.na(x)))
+  #Finds the functional dependencies between a column we suspect is a foreign key, and the rest of the columns of the given dataframe (df)
+  dependencies$ratio <- as.numeric(dependencies$ratio)
+  dependencies <- dependencies %>% filter(ratio>80) %>% arrange(desc(ratio))
+  dependencies$ratio <- sprintf("%.2f%%", dependencies$ratio)
+  return (dependencies)
+}
+functionalDependencies(df, key)
